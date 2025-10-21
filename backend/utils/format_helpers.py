@@ -8,7 +8,7 @@ def pad_center(text, width):
     right = padding - left
     return ' ' * left + text + ' ' * right
 
-def format_items(items, grammar_productions, always_show_start=False):
+def format_items(items, grammar_productions, always_show_start=False, remove_braces=False):
     """Formatea un conjunto de items LR(1)."""
     if not items:
         return ''
@@ -56,8 +56,43 @@ def format_items(items, grammar_productions, always_show_start=False):
 
     # Ordenar los items usando la función de ordenamiento personalizada
     sorted_items = sorted(items, key=get_item_sort_key)
-    # Unir los items con punto y coma y envolver en llaves y corchetes
-    return '{[' + '; '.join(str(it) for it in sorted_items) + ']}'
+
+    # Agrupar por (producción, dot_position) y coleccionar lookaheads
+    groups = {}
+    prod_map = {}
+    for it in sorted_items:
+        key = (it.production.left, tuple(it.production.right), it.dot_position)
+        groups.setdefault(key, set()).add(str(it.lookahead))
+        prod_map[key] = it.production
+
+    # Construir representación por grupo, con lookaheads ordenadas y separadas por '/'
+    parts = []
+    for key in sorted(groups.keys(), key=lambda k: (
+            0 if k[0] == "S'" else 1,
+            prod_order.get((k[0], k[1]), float('inf')),
+            -k[2]
+        )):
+        prod = prod_map[key]
+        left, right, dot = key
+        # Formatear el RHS con el punto
+        if len(right) == 0:
+            rhs_text = '.'
+        else:
+            rhs_list = list(right)
+            rhs_list.insert(dot, '.')
+            rhs_text = ' '.join(rhs_list)
+        # ordenar lookaheads para consistencia
+        las = sorted(groups[key])
+        la_text = '/'.join(las)
+        part = f"[{left} -> {rhs_text}, {la_text}]"
+        parts.append(part)
+
+    items_str = '; '.join(parts)
+
+    if remove_braces:
+        return items_str
+    else:
+        return '{' + items_str + '}'
 
 def get_transition_sort_key(t, grammar):
     """Obtiene la clave de ordenamiento para las transiciones."""
@@ -74,7 +109,18 @@ def get_transition_sort_key(t, grammar):
             sym_order = grammar.non_terminals.index(sym_str)
             type_order = 0
         else:
-            sym_order = grammar.terminals.index(sym_str)
+            # Mantener el orden original de los terminales según aparecen
+            # en la gramática, pero dar prioridad (menor sym_order)
+            # a símbolos "cerrantes" comunes como ')' o ',' para que
+            # aparezcan antes que sus contrapartes abiertas en la ordenación
+            # de transiciones.
+            closing_symbols = {')', ',', ']', '}', ';'}
+            is_closing = 0 if sym_str in closing_symbols else 1
+            base_index = grammar.terminals.index(sym_str)
+            # sym_order es una tuple usada por Python cuando se compara
+            # (is_closing, base_index) pero como necesitamos un número,
+            # combinamos en uno solo: primero is_closing, luego base_index
+            sym_order = is_closing * 10000 + base_index
             type_order = 1
     except ValueError:
         sym_order = float('inf')

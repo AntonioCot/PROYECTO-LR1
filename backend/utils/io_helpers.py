@@ -14,7 +14,12 @@ def read_grammar_from_file(filename):
                 continue
             left, right = line.split('->', 1)
             left = left.strip()
-            rhs = [tok.strip() for tok in right.strip().split()]
+            # split tokens, but treat explicit epsilon markers ('' or ε) as empty RHS
+            parts = [tok.strip() for tok in right.strip().split()]
+            if len(parts) == 0 or (len(parts) == 1 and parts[0] in ("''", "ε", "")):
+                rhs = []
+            else:
+                rhs = parts
             g.add_production(left, rhs)
     return g
 

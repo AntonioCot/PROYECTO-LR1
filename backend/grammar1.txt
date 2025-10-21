@@ -1,6 +1,3 @@
-S' -> D
-D -> T V
-T -> int
-T -> float
-V -> id , V
-V -> id
+S' -> A
+A -> A ( A )
+A -> ''

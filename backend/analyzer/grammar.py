@@ -9,6 +9,8 @@ class Production:
         return hash((self.left, tuple(self.right)))
 
     def __str__(self):
+        if not self.right:  # producción vacía
+            return f"{self.left} -> ''"
         return f"{self.left} -> {' '.join(self.right)}"
 
 class Grammar:
@@ -21,15 +23,15 @@ class Grammar:
 
     def add_production(self, left, right):
         """Añade una nueva producción a la gramática"""
+        # Para producciones vacías, asegurar que right sea una lista vacía
+        if not right or right == ['ε'] or right == [''] or right == ["''"]:
+            right = []
         production = Production(left, right)
         self.productions.append(production)
         if left not in self.non_terminals:
             self.non_terminals.append(left)
         # Detectar términos y no terminales en el lado derecho
         for symbol in right:
-            if symbol == 'ε' or symbol == '':
-                # epsilon, no añadir como terminal
-                continue
             # heurística: si el primer caracter es mayúscula lo tomamos como no terminal
             if symbol[0].isupper():
                 if symbol not in self.non_terminals:
@@ -53,7 +55,7 @@ class Grammar:
                 A = prod.left
                 rhs = prod.right
                 # Si la producción es epsilon
-                if len(rhs) == 0 or (len(rhs) == 1 and rhs[0] == 'ε'):
+                if len(rhs) == 0 or (len(rhs) == 1 and (rhs[0] == 'ε' or rhs[0] == '' or rhs[0] == "''")):
                     if 'ε' not in self.first[A]:
                         self.first[A].append('ε')
                         changed = True

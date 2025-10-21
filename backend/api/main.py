@@ -34,7 +34,6 @@ app.add_middleware(
 
 def parse_grammar_from_string(text: str) -> Grammar:
     """Construye un objeto Grammar a partir de texto en el mismo formato que los archivos de gramática."""
-    from utils.io_helpers import read_grammar_from_file
     g = Grammar()
     for line in text.splitlines():
         line = line.strip()
@@ -44,7 +43,11 @@ def parse_grammar_from_string(text: str) -> Grammar:
             continue
         left, right = line.split('->', 1)
         left = left.strip()
-        rhs = [tok.strip() for tok in right.strip().split()]
+        right = right.strip()
+        if right == "''" or right == "":
+            rhs = []  # producción vacía
+        else:
+            rhs = [tok.strip() for tok in right.split()]
         g.add_production(left, rhs)
     g.calculate_first()
     return g

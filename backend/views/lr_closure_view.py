@@ -3,27 +3,68 @@ from utils.format_helpers import pad_center, format_items, get_transition_sort_k
 
 def write_lr_closure(writer, parser, transitions_from):
     """Escribe la tabla de clausura LR(1)."""
-    # Columnas para ASCII art table
-    col_goto = 17      # ancho para goto y bordes
-    col_kernel = 43    # ancho para kernel y bordes
-    col_state = 7      # ancho para state y bordes
-    col_closure = 107  # ancho para closure y bordes
+    # Recolectar filas (sin imprimir) para calcular anchos dinámicos
+    rows = []  # cada fila: (goto_label, kernel_str, state_str, closure_str)
 
-    writer.write_line('\n/------------------TABLA LR(1) clausura-------------')
+    writer.write_line('\nLR(1) closure table')
 
     # Crear mapeo de estados
     state_mapping = create_state_mapping(parser, transitions_from)
 
+    # fila inicial
+    kitems = format_kernel_items(parser, 0)
+    citems = format_items(parser.states[0].items, parser.grammar.productions, True)
+    rows.append(('','' , '0', ''))
+    # We'll build a proper initial row explicitly later; store strings ready
+    initial_row = ('', kitems, '0', citems)
+
+    # Recolectar y ordenar transiciones
+    state_transitions = []
+    for from_state in range(len(parser.states)):
+        trans = transitions_from.get(from_state, [])
+        for sym, to in trans:
+            state_transitions.append((from_state, sym, to))
+
+    sorted_transitions = sorted(state_transitions, key=lambda t: get_transition_sort_key(t, parser.grammar))
+
+    seen_transitions = set()
+    seen_states = {0}
+
+    transition_rows = []
+    for from_state, sym, to in sorted_transitions:
+        transition_key = (from_state, str(sym), to)
+        if transition_key in seen_transitions:
+            continue
+        seen_transitions.add(transition_key)
+        show_closure = not to in seen_states
+        seen_states.add(to)
+
+        goto_label = f"goto({state_mapping[from_state]}, {sym})"
+        kernel_str = format_kernel_items(parser, to)
+        closure_str = format_items(parser.states[to].items, parser.grammar.productions, True) if show_closure else ''
+        state_str = str(state_mapping[to])
+        transition_rows.append((goto_label, kernel_str, state_str, closure_str))
+
+    # Usar anchos fijos que coincidan con la imagen objetivo
+    col_goto = 18
+    col_kernel = 43
+    col_state = 7
+    col_closure = 107
+
     # Table headers
     write_table_headers(writer, col_goto, col_kernel, col_state, col_closure)
-    
-    # First, state 0's kernel and closure
-    write_initial_state(writer, parser, col_goto, col_kernel, col_state, col_closure)
 
-    # Procesar las transiciones ordenadas
-    write_transitions(writer, parser, transitions_from, state_mapping, 
-                     col_goto, col_kernel, col_state, col_closure)
+    # imprimir fila inicial usando los strings ya preparados
+    writer.write_line('|' + ' '.ljust(col_goto) + '|' + initial_row[1].ljust(col_kernel) + '|' + pad_center(initial_row[2], col_state) + '|' + initial_row[3].ljust(col_closure) + '|')
 
+    # imprimir transiciones
+    for goto_label, kernel_str, state_str, closure_str in transition_rows:
+        writer.write_line('|' + goto_label.ljust(col_goto) + '|' + kernel_str.ljust(col_kernel) + '|' + pad_center(state_str, col_state) + '|' + closure_str.ljust(col_closure) + '|')
+
+    # Table bottom border
+    writer.write_line('+-' + '-' * col_goto + '+' + '-' * col_kernel + '+' + '-' * col_state + '+' + '-' * col_closure + '+')
+
+    writer.write_line('')
     return state_mapping
 
 def create_state_mapping(parser, transitions_from):
@@ -67,7 +108,8 @@ def format_kernel_items(parser, state_idx):
     items = parser.states[state_idx].items
     kernel_items = [it for it in items 
                    if it.dot_position > 0 or it.production == start_prod]
-    return format_items(kernel_items, parser.grammar.productions)
+    # devolver con llaves y corchetes para coincidir con la vista esperada
+    return format_items(kernel_items, parser.grammar.productions, always_show_start=True)
 
 def write_table_headers(writer, col_goto, col_kernel, col_state, col_closure):
     """Escribe los encabezados de la tabla de clausura."""
@@ -84,10 +126,10 @@ def write_initial_state(writer, parser, col_goto, col_kernel, col_state, col_clo
     """Escribe el estado inicial en la tabla de clausura."""
     kitems = format_kernel_items(parser, 0)
     citems = format_items(parser.states[0].items, parser.grammar.productions, True)
-    writer.write_line('| ' + ' ' * (col_goto-2) + 
-                     ' | ' + f"{kitems}".ljust(col_kernel-2) + 
-                     ' | ' + pad_center('0', col_state-2) + 
-                     ' | ' + f"{citems}".ljust(col_closure-2) + ' |')
+    writer.write_line('|' + ' '.ljust(col_goto) + 
+                     '|' + kitems.ljust(col_kernel) + 
+                     '|' + pad_center('0', col_state) + 
+                     '|' + citems.ljust(col_closure) + '|')
 
 def write_transitions(writer, parser, transitions_from, state_mapping, 
                      col_goto, col_kernel, col_state, col_closure):
@@ -127,9 +169,9 @@ def write_transition(writer, parser, from_state, sym, to, state_mapping,
     from_state_num = state_mapping[from_state]
     
     goto_label = f"goto({from_state_num}, {sym})"
-    closure_str = format_items(parser.states[to].items, parser.grammar.productions) if show_closure else ''
+    closure_str = format_items(parser.states[to].items, parser.grammar.productions, True) if show_closure else ''
     
-    writer.write_line('| ' + goto_label.ljust(col_goto-2) + 
-                     ' | ' + f"{kernel_str}".ljust(col_kernel-2) + 
-                     ' | ' + pad_center(str(state_num), col_state-2) + 
-                     ' | ' + f"{closure_str}".ljust(col_closure-2) + ' |')
+    writer.write_line('|' + goto_label.ljust(col_goto) + 
+                     '|' + kernel_str.ljust(col_kernel) + 
+                     '|' + pad_center(str(state_num), col_state) + 
+                     '|' + closure_str.ljust(col_closure) + '|')

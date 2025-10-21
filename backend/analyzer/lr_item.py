@@ -27,6 +27,8 @@ class LR1Item:
     def __str__(self):
         """Representación en string del item LR(1)"""
         right = list(self.production.right)
+        if not right:  # producción vacía
+            return f"{self.production.left} -> ., {self.lookahead}"
         right.insert(self.dot_position, ".")
         return f"{self.production.left} -> {' '.join(right)}, {self.lookahead}"
 
