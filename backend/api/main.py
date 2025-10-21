@@ -106,32 +106,76 @@ def build_parser_and_serialize(grammar: Grammar, tokens: Optional[List[str]]):
             kernel_to_state[kernel_str] = next_state
             next_state += 1
 
-    # closures serialization: include kernel, closure and goto transitions from that state
+    # closures serialization: produce list ordered by shown state (0..n-1)
     closures = []
-    def format_kernel(state_idx):
-        items = parser.states[state_idx].items
-        start_prod = grammar.productions[0]
-        kernel_items = [it for it in items if it.dot_position > 0 or it.production == start_prod]
-        return [str(it) for it in kernel_items]
 
-    for real_state in range(len(parser.states)):
-        items = [str(it) for it in parser.states[real_state].items]
-        # collect gotos from this state (both shifts and goto table)
+    # helper: deterministic item sort key using grammar production order and terminals order
+    term_order = {t: i for i, t in enumerate(grammar.terminals + ["$"])}
+    prod_order = { (p.left, tuple(p.right)): i for i, p in enumerate(grammar.productions) }
+
+    def item_sort_key(item):
+        prod_key = (item.production.left, tuple(item.production.right))
+        pidx = prod_order.get(prod_key, float('inf'))
+        # prefer items with larger dot_position earlier? keep natural increasing
+        dot = item.dot_position
+        la = str(item.lookahead)
+        la_idx = term_order.get(la, len(term_order))
+        return (pidx, dot, la_idx)
+
+    # inverse map: shown -> real
+    inv_map = {shown: real for real, shown in state_mapping.items()}
+    num_shown = max(state_mapping.values()) + 1
+
+    for s_shown in range(num_shown):
+        real = inv_map.get(s_shown, s_shown)
+        state_obj = parser.states[real]
+
+        # kernel: items with dot >0 or the augmented production
+        start_prod = grammar.productions[0]
+        kernel_items = [it for it in state_obj.items if it.dot_position > 0 or it.production == start_prod]
+        kernel_items_sorted = sorted(kernel_items, key=item_sort_key)
+        kernel_list = [str(it) for it in kernel_items_sorted]
+
+        # closure: all items sorted deterministically
+        closure_items_sorted = sorted(list(state_obj.items), key=item_sort_key)
+        closure_list = [str(it) for it in closure_items_sorted]
+
+        # collect gotos from this real state (shifts and gotos), dedupe by symbol
         gotos = []
-        # transitions_from holds (sym, dest) for shifts and gotos
+        seen_syms = set()
+        # shifts
         for (st, sym), act in parser.action_table.items():
-            if st == real_state and isinstance(act, tuple) and act[0] == 'shift':
+            if st == real and isinstance(act, tuple) and act[0] == 'shift':
                 dest = act[1]
-                gotos.append({"symbol": str(sym), "to": state_mapping.get(dest, dest)})
+                sym_s = str(sym)
+                if sym_s not in seen_syms:
+                    gotos.append({"symbol": sym_s, "to": state_mapping.get(dest, dest)})
+                    seen_syms.add(sym_s)
+        # gotos
         for (st, A), dest in parser.goto_table.items():
-            if st == real_state:
-                gotos.append({"symbol": str(A), "to": state_mapping.get(dest, dest)})
+            if st == real:
+                sym_s = str(A)
+                if sym_s not in seen_syms:
+                    gotos.append({"symbol": sym_s, "to": state_mapping.get(dest, dest)})
+                    seen_syms.add(sym_s)
+
+        # sort gotos by symbol using grammar order (terminals then non-terminals)
+        def goto_sort_key(g):
+            s = g['symbol']
+            if s in grammar.terminals:
+                return (0, grammar.terminals.index(s))
+            try:
+                return (1, grammar.non_terminals.index(s))
+            except ValueError:
+                return (2, s)
+
+        gotos_sorted = sorted(gotos, key=goto_sort_key)
 
         closures.append({
-            "state": state_mapping.get(real_state, real_state),
-            "kernel": format_kernel(real_state),
-            "closure": items,
-            "goto": gotos
+            "state": s_shown,
+            "kernel": kernel_list,
+            "closure": closure_list,
+            "goto": gotos_sorted
         })
 
     # LR table serialization - follow views.lr_table_view.get_table_columns logic
