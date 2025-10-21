@@ -12,6 +12,7 @@ if BASE not in sys.path:
     sys.path.insert(0, BASE)
 
 from analyzer import Grammar, LR1Parser
+from views.derivation_view import simulate_parsing
 
 
 class ParseRequest(BaseModel):
@@ -202,24 +203,18 @@ def build_parser_and_serialize(grammar: Grammar, tokens: Optional[List[str]]):
     derivation = []
     if tokens is not None:
         try:
-            steps = parser.parse(tokens)
-            # steps: list of {'stack': [...], 'input': [...], 'action': 'shift 4'...} from analyzer.lr_parser.parse
-            # normalize to our derivation schema
-            for i, st in enumerate(steps, start=1):
-                # normalize action strings to human readable
-                raw_action = st.get('action')
-                action_str = raw_action
-                if isinstance(raw_action, str):
-                    if raw_action.startswith('shift'):
-                        action_str = raw_action.replace('shift', 'shift')
-                    elif raw_action.startswith('reduce'):
-                        action_str = raw_action.replace('reduce', 'reduce')
-                    elif raw_action.startswith('accept') or raw_action == 'accept':
-                        action_str = 'accept'
+            # Use the same simulation used by views.derivation_view to obtain formatted rows
+            rows = simulate_parsing(parser, tokens, state_mapping)
+            # rows is a list of tuples: (step_str, stack_str, input_str, action_str)
+            for step_str, stack_str, input_str, action_str in rows:
+                try:
+                    step_num = int(step_str)
+                except Exception:
+                    step_num = step_str
                 derivation.append({
-                    "step": i,
-                    "stack": st.get('stack', []),
-                    "input": st.get('input', []),
+                    "step": step_num,
+                    "stack": stack_str,
+                    "input": input_str,
                     "action": action_str
                 })
         except Exception as e:
