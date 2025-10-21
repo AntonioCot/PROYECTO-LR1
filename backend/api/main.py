@@ -71,25 +71,35 @@ def build_parser_and_serialize(grammar: Grammar, tokens: Optional[List[str]]):
     for (st, sym), to in parser.goto_table.items():
         transitions_from.setdefault(st, []).append((sym, to))
 
-    # Create a simple state mapping consistent with previous views.lr_closure_view
-    # Map displayed states to real states (0..n) based on kernel uniqueness so UI keeps stable numbering
-    kernel_to_state = {}
-    state_mapping = {}
-    next_state = 0
-    def format_kernel(state_idx):
-        items = parser.states[state_idx].items
-        start_prod = grammar.productions[0]
-        kernel_items = [it for it in items if it.dot_position > 0 or it.production == start_prod]
-        return tuple(str(it) for it in kernel_items)
+    # Create a state mapping using the same algorithm as views.lr_closure_view.create_state_mapping
+    # so numbering (shown states) matches the output of run.py
+    from utils.format_helpers import format_items, get_transition_sort_key
 
-    # assign mapping by iterating states in parser order and assigning shown indices by kernel
-    for real_idx in range(len(parser.states)):
-        k = format_kernel(real_idx)
-        if k in kernel_to_state:
-            state_mapping[real_idx] = kernel_to_state[k]
-        else:
-            state_mapping[real_idx] = next_state
-            kernel_to_state[k] = next_state
+    state_mapping = {}
+    kernel_to_state = {}
+    next_state = 0
+
+    # register start state 0
+    start_kernel = format_items(parser.states[0].items, grammar.productions)
+    state_mapping[0] = 0
+    kernel_to_state[start_kernel] = 0
+    next_state = 1
+
+    # collect and sort transitions
+    state_transitions = []
+    for from_state in range(len(parser.states)):
+        for sym, to in transitions_from.get(from_state, []):
+            state_transitions.append((from_state, sym, to))
+
+    sorted_transitions = sorted(state_transitions, key=lambda t: get_transition_sort_key(t, grammar))
+
+    for from_state, sym, to in sorted_transitions:
+        kernel_str = format_items(parser.states[to].items, grammar.productions)
+        if kernel_str in kernel_to_state:
+            state_mapping[to] = kernel_to_state[kernel_str]
+        elif to not in state_mapping:
+            state_mapping[to] = next_state
+            kernel_to_state[kernel_str] = next_state
             next_state += 1
 
     # closures serialization: include kernel, closure and goto transitions from that state
@@ -120,16 +130,24 @@ def build_parser_and_serialize(grammar: Grammar, tokens: Optional[List[str]]):
             "goto": gotos
         })
 
-    # LR table serialization
-    # action columns: terminals present in grammar.terminals plus '$' if used
-    action_cols = list(grammar.terminals)
-    if any(k[1] == '$' for k in parser.action_table.keys()) and '$' not in action_cols:
+    # LR table serialization - follow views.lr_table_view.get_table_columns logic
+    # Columnas ACTION: solo terminales que aparecen en action_table
+    action_cols = [t for t in grammar.terminals
+                  if any((st, t) in parser.action_table
+                        for st in range(len(parser.states)))]
+    if any(sym == '$' for (_, sym) in parser.action_table.keys()) and '$' not in action_cols:
         action_cols.append('$')
 
-    goto_cols = list(grammar.non_terminals)
+    # Columnas GOTO: incluir S' y luego no terminales que aparecen en goto_table
+    goto_present = {sym for (_, sym) in parser.goto_table.keys()}
+    goto_cols = ["S'"] + [A for A in grammar.non_terminals if A in goto_present and A != "S'"]
 
+    # Build rows ordered by shown state (0..num_shown-1) using inv_map
+    inv_map = {shown: real for real, shown in state_mapping.items()}
+    num_shown = max(state_mapping.values()) + 1
     rows = []
-    for real in range(len(parser.states)):
+    for s_shown in range(num_shown):
+        real = inv_map.get(s_shown, s_shown)
         action_map = {}
         for t in action_cols:
             act = parser.action_table.get((real, t))
@@ -149,7 +167,36 @@ def build_parser_and_serialize(grammar: Grammar, tokens: Optional[List[str]]):
         for A in goto_cols:
             dest = parser.goto_table.get((real, A))
             goto_map[A] = None if dest is None else str(state_mapping.get(dest, dest))
-        rows.append({"state": state_mapping.get(real, real), "action": action_map, "goto": goto_map})
+        rows.append({"state": s_shown, "action": action_map, "goto": goto_map})
+
+    # Además, construir `table` en el mismo formato que views.lr_table_view espera
+    # Esto facilita que el frontend reconstruya la tabla tal como se imprime en backend/run.py
+    inv_map = {shown: real for real, shown in state_mapping.items()}
+    table_headers = ["State"] + action_cols + goto_cols
+    table_rows = []
+    def fmt_action_local(action):
+        if not action:
+            return ''
+        kind, val = action
+        if kind == 'shift':
+            return f's{state_mapping.get(val, val)}'
+        if kind == 'reduce':
+            return f'r{val}'
+        if kind == 'accept':
+            return 'acc'
+        return str(action)
+
+    for s_shown in range(num_shown):
+        s_real = inv_map.get(s_shown, s_shown)
+        row = {"State": s_shown}
+        # ACTION columns
+        for t in action_cols:
+            row[t] = fmt_action_local(parser.action_table.get((s_real, t)))
+        # GOTO columns
+        for A in goto_cols:
+            dest = parser.goto_table.get((s_real, A))
+            row[A] = '' if dest is None else str(state_mapping.get(dest, dest))
+        table_rows.append(row)
 
     # derivation: reuse parser.parse but construct rows similar to views
     derivation = []
@@ -182,6 +229,7 @@ def build_parser_and_serialize(grammar: Grammar, tokens: Optional[List[str]]):
         "first": serialize_first(grammar),
         "closures": closures,
         "lr_table": {"action_columns": action_cols, "goto_columns": goto_cols, "rows": rows},
+        "table": {"headers": table_headers, "rows": table_rows},
         "derivation": derivation
     }
 
